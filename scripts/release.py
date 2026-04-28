@@ -70,6 +70,7 @@ def buildWebRTC(branch):
     os.environ["IOS"] = "true"
     os.environ["MACOS"] = "true"
     os.environ["MAC_CATALYST"] = "true"
+    os.environ["TVOS"] = "true"
 
     return os.system('sh scripts/build.sh') == 0
 
@@ -145,8 +146,17 @@ if __name__ == "__main__":
         
     print("✅ WebRTC build successful\n")
 
-    # Get metadata build file - it has all the information needed about the build
+    # Validate tvOS xcframework before proceeding to release
+    print("➡️ Validating tvOS xcframework...")
     outputDir="./out"
+    xcframeworkDir = os.path.join(outputDir, "WebRTC.xcframework")
+    validateResult = os.system(f'sh scripts/validate_tvos.sh {xcframeworkDir}')
+    if validateResult != 0:
+        print("❌ tvOS xcframework validation failed. Aborting release.")
+        os._exit(os.EX_SOFTWARE)
+    print("✅ tvOS validation passed\n")
+
+    # Get metadata build file - it has all the information needed about the build
     buildMetadata = getBuildMetadata(outputDir)
     print(buildMetadata)
 

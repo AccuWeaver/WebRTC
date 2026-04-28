@@ -12,6 +12,7 @@ BRANCH="${BRANCH:-main}"
 IOS="${IOS:-false}"
 MACOS="${MACOS:-false}"
 MAC_CATALYST="${MAC_CATALYST:-false}"
+TVOS="${TVOS:-false}"
 
 ROOT_DIR="$(pwd)"
 OUTPUT_DIR="${ROOT_DIR}/out"
@@ -47,6 +48,20 @@ build_catalyst() {
     local gen_args="${COMMON_GN_ARGS} target_cpu=\"${arch}\" target_environment=\"catalyst\" target_os=\"ios\" ios_deployment_target=\"14.0\" ios_enable_code_signing=false"
     gn gen "${gen_dir}" --args="${gen_args}"
     gn args --list ${gen_dir} > ${gen_dir}/gn-args.txt
+    ninja -C "${gen_dir}" framework_objc || exit 1
+}
+
+build_tvOS() {
+    local arch=$1
+    local environment=$2
+    local gen_dir="${OUTPUT_DIR}/tvos-${arch}-${environment}"
+    local gen_args="${COMMON_GN_ARGS} target_cpu=\"${arch}\" target_os=\"ios\" target_environment=\"${environment}\" ios_deployment_target=\"15.0\" ios_enable_code_signing=false"
+    gn gen "${gen_dir}" --args="${gen_args}"
+    gn args --list ${gen_dir} > ${gen_dir}/gn-args.txt
+
+    # Patch Ninja files to use tvOS SDK sysroot instead of iOS
+    sh "${ROOT_DIR}/scripts/tvosify.sh" "${gen_dir}" "${environment}"
+
     ninja -C "${gen_dir}" framework_objc || exit 1
 }
 
@@ -109,6 +124,11 @@ fi
 if [ "$MAC_CATALYST" = true ]; then
     build_catalyst "x64"
     build_catalyst "arm64"
+fi
+
+if [ "$TVOS" = true ]; then
+    build_tvOS "arm64" "device"
+    build_tvOS "arm64" "simulator"
 fi
 
 # Step 4 - Manually create XCFramework.
@@ -186,6 +206,49 @@ if [ "$MAC_CATALYST" = true ]; then
     cp -RP "${OUTPUT_DIR}/catalyst-x64/WebRTC.framework" "${XCFRAMEWORK_DIR}/${CATALYST_LIB_IDENTIFIER}"
     lipo -create -output "${XCFRAMEWORK_DIR}/${CATALYST_LIB_IDENTIFIER}/WebRTC.framework/Versions/A/WebRTC" "${OUTPUT_DIR}/catalyst-x64/WebRTC.framework/WebRTC" "${OUTPUT_DIR}/catalyst-arm64/WebRTC.framework/WebRTC"
     LIB_COUNT=$((LIB_COUNT+1))
+fi
+
+# Step 5.4 - Add tvOS libs to XCFramework
+if [ "$TVOS" = true ]; then
+
+    TVOS_LIB_IDENTIFIER="tvos-arm64"
+    TVOS_SIM_LIB_IDENTIFIER="tvos-arm64-simulator"
+
+    mkdir "${XCFRAMEWORK_DIR}/${TVOS_LIB_IDENTIFIER}"
+    mkdir "${XCFRAMEWORK_DIR}/${TVOS_SIM_LIB_IDENTIFIER}"
+
+    plist_add_library $LIB_COUNT "${TVOS_LIB_IDENTIFIER}" "tvos"
+    plist_add_architecture $LIB_COUNT "arm64"
+    LIB_COUNT=$((LIB_COUNT+1))
+
+    plist_add_library $LIB_COUNT "${TVOS_SIM_LIB_IDENTIFIER}" "tvos" "simulator"
+    plist_add_architecture $LIB_COUNT "arm64"
+    LIB_COUNT=$((LIB_COUNT+1))
+
+    # Copy tvOS device framework (single arch, no lipo needed)
+    cp -r "${OUTPUT_DIR}/tvos-arm64-device/WebRTC.framework" "${XCFRAMEWORK_DIR}/${TVOS_LIB_IDENTIFIER}"
+
+    # Copy tvOS simulator framework (arm64 only, no lipo needed)
+    cp -r "${OUTPUT_DIR}/tvos-arm64-simulator/WebRTC.framework" "${XCFRAMEWORK_DIR}/${TVOS_SIM_LIB_IDENTIFIER}"
+fi
+
+# Step 5.5 - Validate tvOS slices are present in xcframework
+if [ "$TVOS" = true ]; then
+    if [ ! -d "${XCFRAMEWORK_DIR}/tvos-arm64" ]; then
+        echo "Error: tvOS device slice (tvos-arm64) is missing from the xcframework"
+        exit 1
+    fi
+    if [ ! -d "${XCFRAMEWORK_DIR}/tvos-arm64-simulator" ]; then
+        echo "Error: tvOS simulator slice (tvos-arm64-simulator) is missing from the xcframework"
+        exit 1
+    fi
+    echo "tvOS slices validated successfully in xcframework"
+fi
+
+# Step 5.6 - Validate tvOS xcframework links correctly
+if [ "$TVOS" = true ]; then
+    echo "Validating tvOS xcframework..."
+    sh "${ROOT_DIR}/scripts/validate_tvos.sh" "${XCFRAMEWORK_DIR}"
 fi
 
 # Step 6 - Add license file to the framework
