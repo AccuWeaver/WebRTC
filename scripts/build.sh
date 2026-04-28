@@ -105,6 +105,10 @@ git fetch --all
 git checkout $BRANCH
 cd ..
 gclient sync --with_branch_heads --with_tags
+
+# Step 2.5 - Apply source patches (fixes for newer SDK deprecations, etc.)
+sh "${ROOT_DIR}/scripts/apply-patches.sh"
+
 cd src
 
 # Step 3 - Compile and build all frameworks
@@ -266,4 +270,3 @@ COMMIT_HASH=$(git rev-parse HEAD)
 
 echo "{ \"file\": \"${OUTPUT_NAME}\", \"checksum\": \"${CHECKSUM}\", \"commit\": \"${COMMIT_HASH}\", \"branch\": \"${BRANCH}\" }" > metadata.json
 cat metadata.json
-
