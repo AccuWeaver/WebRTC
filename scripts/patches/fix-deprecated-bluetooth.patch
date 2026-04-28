@@ -1,0 +1,7 @@
+--- a/sdk/objc/components/audio/RTCAudioSessionConfiguration.m
++++ b/sdk/objc/components/audio/RTCAudioSessionConfiguration.m
+@@ -60,7 +60,7 @@
+     _category = AVAudioSessionCategoryPlayAndRecord;
+-    _categoryOptions = AVAudioSessionCategoryOptionAllowBluetooth;
++    _categoryOptions = AVAudioSessionCategoryOptionAllowBluetoothHFP;
+     _mode = AVAudioSessionModeVoiceChat;
