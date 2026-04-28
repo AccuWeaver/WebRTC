@@ -61,11 +61,16 @@ echo "  Min version flag:  $MIN_VERSION_FLAG"
 
 # Replace iOS SDK sysroot paths with tvOS SDK sysroot in all .ninja files
 # Also replace iOS min-version deployment target flags with tvOS equivalents
+# Also replace the clang target triple from ios to tvos (Xcode 26+ enforces
+# that the target triple platform matches the sysroot platform)
 find "$BUILD_DIR" -name "*.ninja" -exec sed -i '' \
     -e "s|${IOS_SDK_PATH_DEVICE}|${TVOS_SDK_PATH}|g" \
     -e "s|${IOS_SDK_PATH_SIM}|${TVOS_SDK_PATH}|g" \
     -e "s|-miphoneos-version-min=[0-9.]*|${MIN_VERSION_FLAG}|g" \
     -e "s|-mios-simulator-version-min=[0-9.]*|${MIN_VERSION_FLAG}|g" \
+    -e "s|-target arm64-apple-ios\([0-9.]*\)-simulator|-target arm64-apple-tvos\1-simulator|g" \
+    -e "s|-target arm64-apple-ios\([0-9.]*\)|-target arm64-apple-tvos\1|g" \
+    -e "s|-target x86_64-apple-ios\([0-9.]*\)-simulator|-target x86_64-apple-tvos\1-simulator|g" \
     {} +
 
 echo "tvosify: Done. Build directory patched for tvOS $ENVIRONMENT."
