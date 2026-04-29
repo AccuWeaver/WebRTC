@@ -1,13 +1,6 @@
 #!/bin/sh
 # Applies all patches to the WebRTC source tree for tvOS compatibility.
 # Run this after `gclient sync` and before `ninja` builds.
-#
-# Strategy: Many ObjC SDK files use iOS-specific APIs (AVCaptureSession,
-# AVAudioSession, UIDevice orientation, Voice Processing Audio Unit) that
-# are either unavailable on tvOS or require tvOS 17.0+ while our deployment
-# target is 15.0. Since the tvOS app is receive-only (no camera, no mic),
-# we wrap these files in #if !TARGET_OS_TV guards so they compile as empty
-# translation units on tvOS while remaining unchanged on iOS/macOS.
 
 set -e
 
@@ -23,7 +16,7 @@ wrap_in_tvos_guard() {
         return
     fi
     if grep -q "TARGET_OS_TV" "$filepath"; then
-        return  # already patched
+        return
     fi
     python3 - "$filepath" << 'PYEOF'
 import sys
@@ -46,22 +39,22 @@ PYEOF
     echo "  Guarded $(basename $filepath)"
 }
 
-# Fix 1: AVAudioSessionCategoryOptionAllowBluetooth deprecated in Xcode 26+
-# Replace with AVAudioSessionCategoryOptionAllowBluetoothHFP (for iOS/macOS)
+# --- Xcode 26+ SDK deprecation fixes (affects all platforms) ---
+
+# Fix: AVAudioSessionCategoryOptionAllowBluetooth deprecated
 AUDIO_CONFIG="${SRC_DIR}/sdk/objc/components/audio/RTCAudioSessionConfiguration.m"
 if [ -f "$AUDIO_CONFIG" ]; then
     sed -i '' 's/AVAudioSessionCategoryOptionAllowBluetooth;/AVAudioSessionCategoryOptionAllowBluetoothHFP;/' "$AUDIO_CONFIG"
     echo "  Fixed Bluetooth deprecation in RTCAudioSessionConfiguration.m"
 fi
 
-# Fix 2: Guard files that use tvOS 17.0+ or iOS-only APIs
-# These are all capture/audio-session/device-orientation helpers that a
-# receive-only tvOS streaming app does not need.
+# --- tvOS #if !TARGET_OS_TV guards (files using tvOS 17.0+ or iOS-only APIs) ---
 
-# Audio session configuration (AVAudioSession APIs require tvOS 17.0+)
+# Audio session (AVAudioSession APIs require tvOS 17.0+)
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSessionConfiguration.m"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSession.mm"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSession+Configuration.mm"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCNativeAudioSessionDelegateAdapter.mm"
 
 # Camera preview (AVCaptureSession, UIDeviceOrientation unavailable on tvOS)
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/helpers/RTCCameraPreviewView.m"
@@ -74,12 +67,33 @@ wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/voice_processing_audio_
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/audio_device_ios.mm"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/audio_device_module_ios.mm"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/helpers.mm"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/api/audio_device_module.mm"
 
 # Camera capturer (AVCaptureSession, AVCaptureDevice)
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCCameraVideoCapturer.m"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCFileVideoCapturer.m"
 
 # OpenGL renderer (GLKit/EAGL deprecated, UIApplication references)
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/renderer/opengl/RTCEAGLVideoView.m"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/renderer/opengl/RTCDisplayLinkTimer.m"
+
+# Video codec (UIDevice+H264Profile uses iOS-specific device checks)
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/video_codec/UIDevice+H264Profile.mm"
+
+# --- Metal renderer TARGET_OS_IOS -> TARGET_OS_IPHONE fix ---
+# RTCMTLRenderer.h uses #if TARGET_OS_IOS which is false on tvOS.
+# tvOS uses UIKit like iOS, so the correct check is TARGET_OS_IPHONE
+# (true for both iOS and tvOS). Without this fix, tvOS falls into the
+# #else branch which imports AppKit and uses NSView (macOS-only).
+MTL_RENDERER_H="${SRC_DIR}/sdk/objc/components/renderer/metal/RTCMTLRenderer.h"
+if [ -f "$MTL_RENDERER_H" ]; then
+    sed -i '' 's/#if TARGET_OS_IOS/#if TARGET_OS_IPHONE/g' "$MTL_RENDERER_H"
+    sed -i '' 's/#if TARGET_OS_iOS/#if TARGET_OS_IPHONE/g' "$MTL_RENDERER_H"
+    echo "  Patched RTCMTLRenderer.h (TARGET_OS_IOS -> TARGET_OS_IPHONE)"
+fi
+
+# --- Disable scheduled release workflow (no releases exist yet) ---
+# The release.py crashes with IndexError when no GitHub releases exist.
+# This is handled by disabling the workflow in the repo settings instead.
 
 echo "All patches applied."
