@@ -9,7 +9,7 @@ SRC_DIR="${SCRIPT_DIR}/../src"
 
 echo "Applying source patches..."
 
-# Helper: wraps an ObjC file in #if !TARGET_OS_TV / #endif
+# Helper: wraps an ObjC source or header file in #if !TARGET_OS_TV / #endif
 wrap_in_tvos_guard() {
     local filepath="$1"
     if [ ! -f "$filepath" ]; then
@@ -41,59 +41,72 @@ PYEOF
 
 # --- Xcode 26+ SDK deprecation fixes (affects all platforms) ---
 
-# Fix: AVAudioSessionCategoryOptionAllowBluetooth deprecated
 AUDIO_CONFIG="${SRC_DIR}/sdk/objc/components/audio/RTCAudioSessionConfiguration.m"
 if [ -f "$AUDIO_CONFIG" ]; then
     sed -i '' 's/AVAudioSessionCategoryOptionAllowBluetooth;/AVAudioSessionCategoryOptionAllowBluetoothHFP;/' "$AUDIO_CONFIG"
     echo "  Fixed Bluetooth deprecation in RTCAudioSessionConfiguration.m"
 fi
 
-# --- tvOS #if !TARGET_OS_TV guards (files using tvOS 17.0+ or iOS-only APIs) ---
+# --- tvOS guards: BOTH headers AND implementation files ---
+# Headers must be guarded too, because even if the .m is guarded,
+# the .m still #imports the .h which triggers availability errors.
 
-# Audio session (AVAudioSession APIs require tvOS 17.0+)
+# Audio session
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSessionConfiguration.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSessionConfiguration.m"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSession.h"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSession+Private.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSession.mm"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSession+Configuration.mm"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCNativeAudioSessionDelegateAdapter.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCNativeAudioSessionDelegateAdapter.mm"
 
-# Camera preview (AVCaptureSession, UIDeviceOrientation unavailable on tvOS)
+# Camera preview
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/helpers/RTCCameraPreviewView.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/helpers/RTCCameraPreviewView.m"
 
-# AVCapture helpers (AVCaptureSession requires tvOS 17.0+)
+# AVCapture helpers
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/helpers/AVCaptureSession+DevicePosition.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/helpers/AVCaptureSession+DevicePosition.mm"
 
-# Native audio device (Voice Processing Audio Unit, audio_device_ios)
+# Native audio device
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/voice_processing_audio_unit.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/voice_processing_audio_unit.mm"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/audio_device_ios.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/audio_device_ios.mm"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/audio_device_module_ios.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/audio_device_module_ios.mm"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/helpers.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/helpers.mm"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/audio_session_observer.h"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/api/audio_device_module.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/api/audio_device_module.mm"
 
-# Camera capturer (AVCaptureSession, AVCaptureDevice)
+# Camera capturer (headers + implementations)
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCCameraVideoCapturer.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCCameraVideoCapturer.m"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCFileVideoCapturer.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCFileVideoCapturer.m"
 
-# OpenGL renderer (GLKit/EAGL deprecated, UIApplication references)
+# OpenGL renderer
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/renderer/opengl/RTCEAGLVideoView.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/renderer/opengl/RTCEAGLVideoView.m"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/renderer/opengl/RTCDisplayLinkTimer.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/renderer/opengl/RTCDisplayLinkTimer.m"
 
-# Video codec (UIDevice+H264Profile uses iOS-specific device checks)
+# Video codec (UIDevice+H264Profile)
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/video_codec/UIDevice+H264Profile.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/video_codec/UIDevice+H264Profile.mm"
 
+# UIDevice+RTCDevice helper
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/helpers/UIDevice+RTCDevice.h"
+wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/helpers/UIDevice+RTCDevice.mm"
+
 # --- Metal renderer TARGET_OS_IOS -> TARGET_OS_IPHONE fix ---
-# RTCMTLRenderer.h uses #if TARGET_OS_IOS which is false on tvOS.
-# tvOS uses UIKit like iOS, so the correct check is TARGET_OS_IPHONE
-# (true for both iOS and tvOS). Without this fix, tvOS falls into the
-# #else branch which imports AppKit and uses NSView (macOS-only).
 MTL_RENDERER_H="${SRC_DIR}/sdk/objc/components/renderer/metal/RTCMTLRenderer.h"
 if [ -f "$MTL_RENDERER_H" ]; then
     sed -i '' 's/#if TARGET_OS_IOS/#if TARGET_OS_IPHONE/g' "$MTL_RENDERER_H"
-    sed -i '' 's/#if TARGET_OS_iOS/#if TARGET_OS_IPHONE/g' "$MTL_RENDERER_H"
     echo "  Patched RTCMTLRenderer.h (TARGET_OS_IOS -> TARGET_OS_IPHONE)"
 fi
-
-# --- Disable scheduled release workflow (no releases exist yet) ---
-# The release.py crashes with IndexError when no GitHub releases exist.
-# This is handled by disabling the workflow in the repo settings instead.
 
 echo "All patches applied."
