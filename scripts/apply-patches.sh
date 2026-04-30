@@ -9,7 +9,8 @@ SRC_DIR="${SCRIPT_DIR}/../src"
 
 echo "Applying source patches..."
 
-# Helper: wraps an ObjC source or header file in #if !TARGET_OS_TV / #endif
+# Helper: wraps ENTIRE file in #if !TARGET_OS_TV / #endif
+# This includes the imports, so the file is completely empty on tvOS.
 wrap_in_tvos_guard() {
     local filepath="$1"
     if [ ! -f "$filepath" ]; then
@@ -18,24 +19,16 @@ wrap_in_tvos_guard() {
     if grep -q "TARGET_OS_TV" "$filepath"; then
         return
     fi
-    python3 - "$filepath" << 'PYEOF'
-import sys
-filepath = sys.argv[1]
-with open(filepath, 'r') as f:
-    content = f.read()
-lines = content.split('\n')
-last_import_idx = 0
-for i, line in enumerate(lines):
-    stripped = line.strip()
-    if stripped.startswith('#import') or stripped.startswith('#include'):
-        last_import_idx = i
-lines.insert(last_import_idx + 1, '')
-lines.insert(last_import_idx + 2, '#include <TargetConditionals.h>')
-lines.insert(last_import_idx + 3, '#if !TARGET_OS_TV')
-lines.append('#endif  // !TARGET_OS_TV')
-with open(filepath, 'w') as f:
-    f.write('\n'.join(lines))
-PYEOF
+    # Prepend guard at top, append endif at bottom
+    local tmp="${filepath}.tvos_tmp"
+    {
+        echo "#include <TargetConditionals.h>"
+        echo "#if !TARGET_OS_TV"
+        cat "$filepath"
+        echo ""
+        echo "#endif  // !TARGET_OS_TV"
+    } > "$tmp"
+    mv "$tmp" "$filepath"
     echo "  Guarded $(basename $filepath)"
 }
 
@@ -47,9 +40,7 @@ if [ -f "$AUDIO_CONFIG" ]; then
     echo "  Fixed Bluetooth deprecation in RTCAudioSessionConfiguration.m"
 fi
 
-# --- tvOS guards: BOTH headers AND implementation files ---
-# Headers must be guarded too, because even if the .m is guarded,
-# the .m still #imports the .h which triggers availability errors.
+# --- tvOS guards: wrap ENTIRE files (headers + implementations) ---
 
 # Audio session
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/audio/RTCAudioSessionConfiguration.h"
@@ -82,7 +73,7 @@ wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/src/audio/audio_session_observer.
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/api/audio_device_module.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/native/api/audio_device_module.mm"
 
-# Camera capturer (headers + implementations)
+# Camera capturer
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCCameraVideoCapturer.h"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCCameraVideoCapturer.m"
 wrap_in_tvos_guard "${SRC_DIR}/sdk/objc/components/capturer/RTCFileVideoCapturer.h"
