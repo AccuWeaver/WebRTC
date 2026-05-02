@@ -9,9 +9,8 @@
 # 1. guard_file: wraps ENTIRE file in #if !TARGET_OS_TV / #endif
 #    Used for files that are completely iOS-only (audio session, camera, etc.)
 #
-# 2. Inline patches: change #if defined(WEBRTC_IOS) to
-#    #if defined(WEBRTC_IOS) && !TARGET_OS_TV in files that have both
-#    iOS-specific and cross-platform code.
+# 2. Surgical sed patches for specific WEBRTC_IOS guards in files that
+#    have both iOS-specific and cross-platform code.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,9 +31,10 @@ guard_file() {
     echo "  Guarded $(basename "$f")"
 }
 
-# Helper: adds #include <TargetConditionals.h> and patches WEBRTC_IOS guards
-# to also exclude TARGET_OS_TV. Used for files with mixed iOS/cross-platform code.
-patch_webrtc_ios_guards() {
+# Helper: adds TargetConditionals.h include and patches ALL WEBRTC_IOS
+# guards to also exclude TARGET_OS_TV. Only use for files where EVERY
+# WEBRTC_IOS block is iOS-only (not needed on tvOS).
+patch_all_webrtc_ios_guards() {
     local f="$1"
     [ ! -f "$f" ] && return
     grep -q "TARGET_OS_TV" "$f" && return
@@ -109,39 +109,51 @@ guard_file "${SRC_DIR}/sdk/objc/helpers/UIDevice+RTCDevice.h"
 guard_file "${SRC_DIR}/sdk/objc/helpers/UIDevice+RTCDevice.mm"
 
 # =====================================================================
-# STRATEGY 2: Inline WEBRTC_IOS guard patches for mixed-use files
+# STRATEGY 2: Patch WEBRTC_IOS guards in mixed-use files
 # These files have cross-platform code but use #if defined(WEBRTC_IOS)
-# to conditionally include iOS-specific sections. Since the tvOS build
-# defines WEBRTC_IOS (target_os="ios"), we add !TARGET_OS_TV to skip
-# those sections on tvOS.
+# to conditionally include iOS-specific sections that reference guarded
+# headers. Since the tvOS build defines WEBRTC_IOS (target_os="ios"),
+# we add !TARGET_OS_TV to skip those sections on tvOS.
 # =====================================================================
 
-# H264 profile level ID — references UIDevice+H264Profile.h (guarded)
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/components/video_codec/RTCH264ProfileLevelId.mm"
+# --- H264 profile level ID ---
+# References UIDevice+H264Profile.h (guarded) under WEBRTC_IOS.
+# All WEBRTC_IOS blocks in this file are iOS-only (device profile detection).
+patch_all_webrtc_ios_guards "${SRC_DIR}/sdk/objc/components/video_codec/RTCH264ProfileLevelId.mm"
 
-# H264 encoder — references UIDevice+RTCDevice.h (guarded)
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/components/video_codec/RTCVideoEncoderH264.mm"
+# --- H264 encoder ---
+# References UIDevice+RTCDevice.h (guarded) under WEBRTC_IOS.
+# Has multiple WEBRTC_IOS blocks: device detection, pixel buffer compat,
+# and encoder config. All are safe to skip on tvOS (uses defaults).
+patch_all_webrtc_ios_guards "${SRC_DIR}/sdk/objc/components/video_codec/RTCVideoEncoderH264.mm"
 
-# H264 decoder — references UIDevice+RTCDevice.h (guarded)
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/components/video_codec/RTCVideoDecoderH264.mm"
+# --- H264 decoder ---
+# References UIDevice+RTCDevice.h (guarded) under WEBRTC_IOS.
+# Has WEBRTC_IOS blocks for decoder re-init, pixel buffer compat, and
+# session config. All safe to skip on tvOS.
+patch_all_webrtc_ios_guards "${SRC_DIR}/sdk/objc/components/video_codec/RTCVideoDecoderH264.mm"
 
-# PeerConnectionFactory — references audio_device_module.h (guarded)
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm"
+# --- PeerConnectionFactory ---
+# Imports audio_device_module.h (guarded) under WEBRTC_IOS and calls
+# CreateAudioDeviceModule(env) which is the iOS-native ADM factory.
+# The cross-platform CreateAudioDeviceModule(env, audioDevice) overload
+# (from objc_audio_device_module.h) remains available.
+patch_all_webrtc_ios_guards "${SRC_DIR}/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm"
 
-# PeerConnectionFactoryBuilder — references audio_device_module.h (guarded)
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/api/peerconnection/RTCPeerConnectionFactoryBuilder+DefaultComponents.mm"
+# --- PeerConnectionFactoryBuilder+DefaultComponents ---
+# Same pattern as RTCPeerConnectionFactory.mm.
+patch_all_webrtc_ios_guards "${SRC_DIR}/sdk/objc/api/peerconnection/RTCPeerConnectionFactoryBuilder+DefaultComponents.mm"
 
-# ObjC audio device module — has WEBRTC_IOS-gated methods
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/native/src/objc_audio_device.mm"
+# --- Network monitor factory ---
+# Creates ObjCNetworkMonitorFactory under WEBRTC_IOS, returns nullptr otherwise.
+# On tvOS, returning nullptr is fine (no network monitoring).
+patch_all_webrtc_ios_guards "${SRC_DIR}/sdk/objc/native/api/network_monitor_factory.mm"
 
-# Network monitor factory — has WEBRTC_IOS-gated code
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/native/api/network_monitor_factory.mm"
-
-# Native I420 buffer — has WEBRTC_IOS debug code with UIKit
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/api/video_frame_buffer/RTCNativeI420Buffer.mm"
-
-# CVPixelBuffer — has WEBRTC_IOS debug code with UIKit
-patch_webrtc_ios_guards "${SRC_DIR}/sdk/objc/components/video_frame_buffer/RTCCVPixelBuffer.mm"
+# --- Native I420 buffer & CVPixelBuffer ---
+# Have WEBRTC_IOS debug code that imports UIKit for debugQuickLookObject.
+# Safe to skip on tvOS (debug-only, guarded by !NDEBUG too).
+patch_all_webrtc_ios_guards "${SRC_DIR}/sdk/objc/api/video_frame_buffer/RTCNativeI420Buffer.mm"
+patch_all_webrtc_ios_guards "${SRC_DIR}/sdk/objc/components/video_frame_buffer/RTCCVPixelBuffer.mm"
 
 # =====================================================================
 # STRATEGY 3: Targeted patches for specific issues
@@ -153,6 +165,9 @@ MTL_H="${SRC_DIR}/sdk/objc/components/renderer/metal/RTCMTLRenderer.h"
 [ -f "$MTL_H" ] && sed -i '' 's/#if TARGET_OS_IOS/#if TARGET_OS_IPHONE/g' "$MTL_H" && echo "  Patched RTCMTLRenderer.h"
 
 # --- Core C++ audio_device_impl.cc: skip iOS ADM on tvOS ---
+# This file creates the platform-specific audio device. On tvOS we skip
+# the iOS ADM (which uses guarded audio_device_ios.h) so the dummy ADM
+# or a custom RTCAudioDevice-based ADM is used instead.
 ADM="${SRC_DIR}/modules/audio_device/audio_device_impl.cc"
 if [ -f "$ADM" ] && ! grep -q "TARGET_OS_TV" "$ADM"; then
     sed -i '' '1i\
