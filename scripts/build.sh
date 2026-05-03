@@ -107,7 +107,7 @@ cd ..
 gclient sync -D --with_branch_heads --with_tags
 
 # Step 2.5 - Apply source patches (fixes for newer SDK deprecations, etc.)
-sh "${ROOT_DIR}/scripts/apply-patches.sh"
+python3 "${ROOT_DIR}/scripts/apply-patches.py"
 
 cd src
 
