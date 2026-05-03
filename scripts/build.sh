@@ -60,7 +60,7 @@ build_tvOS() {
     gn args --list ${gen_dir} > ${gen_dir}/gn-args.txt
 
     # Patch Ninja files to use tvOS SDK sysroot instead of iOS
-    sh "${ROOT_DIR}/scripts/tvosify.sh" "${gen_dir}" "${environment}"
+    python3 "${ROOT_DIR}/scripts/tvosify.py" "${gen_dir}" "${environment}"
 
     ninja -C "${gen_dir}" framework_objc || exit 1
 }
@@ -252,7 +252,7 @@ fi
 # Step 5.6 - Validate tvOS xcframework links correctly
 if [ "$TVOS" = true ]; then
     echo "Validating tvOS xcframework..."
-    sh "${ROOT_DIR}/scripts/validate_tvos.sh" "${XCFRAMEWORK_DIR}"
+    python3 "${ROOT_DIR}/scripts/validate_tvos.py" "${XCFRAMEWORK_DIR}"
 fi
 
 # Step 6 - Add license file to the framework
